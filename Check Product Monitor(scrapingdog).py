@@ -241,17 +241,21 @@ def write_hyperlinks(sheet, urls, start_row, column):
             sheet.update_acell(cell, hyperlink_formula)
         else:
             logging.warning(f"ASIN not found for URL: {url}")
-
 def calculate_final_price(full_price, prime_price, coupon_discount, currency_symbol='$'):
-    """ Вычисляет итоговую цену с учётом скидок и купонов. Возвращает строку с форматом цены. """
+    """ 
+    Вычисляет итоговую цену с учётом скидок и купонов. 
+    Возвращает строку с форматом цены.
+    """
     try:
         logging.debug(f"Calculating final price with currency symbol: {currency_symbol}")
 
-        def price_to_float(price_str):
-            if not price_str or price_str in ["Not Found", "#N/A", "#DIV/0!"]:
+        def price_to_float(price):
+            if isinstance(price, (int, float)):
+                return float(price)
+            if not price or price in ["Not Found", "#N/A", "#DIV/0!"]:
                 return 0.0  # Возвращаем 0.0, если цена не найдена
-            price_str = price_str.replace(',', '.')
-            return float(re.sub(r'[^\d.]', '', price_str))
+            price = price.replace(',', '.')
+            return float(re.sub(r'[^\d.]', '', price))
 
         full_price_value = price_to_float(full_price)
         prime_price_value = price_to_float(prime_price)
@@ -260,7 +264,7 @@ def calculate_final_price(full_price, prime_price, coupon_discount, currency_sym
 
         # Используем prime_price_value, если доступно, иначе full_price_value
         base_price = prime_price_value if prime_price_value > 0 else full_price_value
-        
+
         if base_price == 0:
             logging.warning("Base price is not available for final price calculation.")
             return f"{currency_symbol}0.00"  # Возвращаем 0.0, если ни одна цена не доступна
@@ -275,6 +279,7 @@ def calculate_final_price(full_price, prime_price, coupon_discount, currency_sym
     except ValueError as e:
         logging.error(f"Ошибка при расчете цены: {str(e)}")
         return f"{currency_symbol}0.00"  # Возвращаем 0.0 в случае ошибки
+
 
 def calculate_discount_percent(full_price, final_price):
     """Вычисляет процент скидки."""
@@ -751,7 +756,6 @@ def get_product_data(api_key, asin, domain='de'):
     except requests.exceptions.RequestException as e:
         logging.error(f"Ошибка при запросе к ScrapingDog для ASIN {asin}: {str(e)}")
         return None
-
 def gather_product_data(config):
     """Функция для сбора данных по продуктам. Возвращает текущие результаты."""
     current_results = {}
@@ -807,6 +811,26 @@ def gather_product_data(config):
                 bsr = extract_bsr(product_information)  # Передаём весь словарь
                 brand = product_data.get('brand', 'Not Found')
 
+                # Извлечение информации о Prime Exclusive
+                is_prime_exclusive = product_data.get('is_prime_exclusive', False)
+                if isinstance(is_prime_exclusive, str):
+                    is_prime_exclusive = is_prime_exclusive.lower() == 'true'
+                prime_exclusive_message = product_data.get('prime_exclusive_message', '')
+
+                # Очистка сообщения от JavaScript-кода
+                prime_exclusive_message_clean = re.split(r'\(function', prime_exclusive_message)[0].strip()
+
+                # Если продукт является Prime Exclusive, извлекаем Prime Price из сообщения
+                if is_prime_exclusive and prime_exclusive_message_clean:
+                    extracted_prime_price = extract_prime_price_from_message(prime_exclusive_message_clean)
+                    if extracted_prime_price != "Not Found":
+                        prime_price = extracted_prime_price
+                        # Пересчитываем итоговую цену и процент скидки с новым Prime Price
+                        final_price = calculate_final_price(price, float(prime_price.replace(',', '.').replace(' €', '')), coupon, currency_symbol)
+                        discount_percent = calculate_discount_percent(price, final_price)
+                    else:
+                        logging.warning(f"Не удалось извлечь Prime Price из сообщения для ASIN {asin}")
+
                 product_info = {
                     "ASIN": asin,
                     "Title": product_data.get('title', 'Не найдено'),
@@ -821,7 +845,9 @@ def gather_product_data(config):
                     "BSR": bsr,
                     "Brand": brand,
                     "Scrape Date": get_kyiv_time().strftime("%d.%m.%Y"),
-                    "URL": url
+                    "URL": url,
+                    "is_prime_exclusive": is_prime_exclusive,
+                    "prime_exclusive_message": prime_exclusive_message_clean
                 }
 
                 # Добавляем логирование извлечённых данных
@@ -876,6 +902,26 @@ def gather_product_data(config):
                 bsr = extract_bsr(product_information)  # Передаём весь словарь
                 brand = product_data.get('brand', 'Not Found')
 
+                # Извлечение информации о Prime Exclusive
+                is_prime_exclusive = product_data.get('is_prime_exclusive', False)
+                if isinstance(is_prime_exclusive, str):
+                    is_prime_exclusive = is_prime_exclusive.lower() == 'true'
+                prime_exclusive_message = product_data.get('prime_exclusive_message', '')
+
+                # Очистка сообщения от JavaScript-кода
+                prime_exclusive_message_clean = re.split(r'\(function', prime_exclusive_message)[0].strip()
+
+                # Если продукт является Prime Exclusive, извлекаем Prime Price из сообщения
+                if is_prime_exclusive and prime_exclusive_message_clean:
+                    extracted_prime_price = extract_prime_price_from_message(prime_exclusive_message_clean)
+                    if extracted_prime_price != "Not Found":
+                        prime_price = extracted_prime_price
+                        # Пересчитываем итоговую цену и процент скидки с новым Prime Price
+                        final_price = calculate_final_price(price, float(prime_price.replace(',', '.').replace(' €', '')), coupon, currency_symbol)
+                        discount_percent = calculate_discount_percent(price, final_price)
+                    else:
+                        logging.warning(f"Не удалось извлечь Prime Price из сообщения для ASIN {asin}")
+
                 product_info = {
                     "ASIN": asin,
                     "Title": product_data.get('title', 'Не найдено'),
@@ -890,7 +936,9 @@ def gather_product_data(config):
                     "BSR": bsr,
                     "Brand": brand,
                     "Scrape Date": get_kyiv_time().strftime("%d.%m.%Y"),
-                    "URL": var_url
+                    "URL": var_url,
+                    "is_prime_exclusive": is_prime_exclusive,
+                    "prime_exclusive_message": prime_exclusive_message_clean
                 }
 
                 # Добавляем логирование извлечённых данных
@@ -958,6 +1006,26 @@ def gather_product_data(config):
                         bsr = extract_bsr(product_information)  # Передаём весь словарь
                         brand = product_data.get('brand', 'Not Found')
 
+                        # Извлечение информации о Prime Exclusive
+                        is_prime_exclusive = product_data.get('is_prime_exclusive', False)
+                        if isinstance(is_prime_exclusive, str):
+                            is_prime_exclusive = is_prime_exclusive.lower() == 'true'
+                        prime_exclusive_message = product_data.get('prime_exclusive_message', '')
+
+                        # Очистка сообщения от JavaScript-кода
+                        prime_exclusive_message_clean = re.split(r'\(function', prime_exclusive_message)[0].strip()
+
+                        # Если продукт является Prime Exclusive, извлекаем Prime Price из сообщения
+                        if is_prime_exclusive and prime_exclusive_message_clean:
+                            extracted_prime_price = extract_prime_price_from_message(prime_exclusive_message_clean)
+                            if extracted_prime_price != "Not Found":
+                                prime_price = extracted_prime_price
+                                # Пересчитываем итоговую цену и процент скидки с новым Prime Price
+                                final_price = calculate_final_price(price, float(prime_price.replace(',', '.').replace(' €', '')), coupon, currency_symbol)
+                                discount_percent = calculate_discount_percent(price, final_price)
+                            else:
+                                logging.warning(f"Не удалось извлечь Prime Price из сообщения для ASIN {asin}")
+
                         product_info = {
                             "ASIN": asin,
                             "Title": product_data.get('title', 'Не найдено'),
@@ -972,7 +1040,9 @@ def gather_product_data(config):
                             "BSR": bsr,
                             "Brand": brand,
                             "Scrape Date": get_kyiv_time().strftime("%d.%m.%Y"),
-                            "URL": url
+                            "URL": url,
+                            "is_prime_exclusive": is_prime_exclusive,
+                            "prime_exclusive_message": prime_exclusive_message_clean
                         }
 
                         # Добавляем логирование извлечённых данных
@@ -1026,6 +1096,26 @@ def gather_product_data(config):
                         bsr = extract_bsr(product_information)  # Передаём весь словарь
                         brand = product_data.get('brand', 'Not Found')
 
+                        # Извлечение информации о Prime Exclusive
+                        is_prime_exclusive = product_data.get('is_prime_exclusive', False)
+                        if isinstance(is_prime_exclusive, str):
+                            is_prime_exclusive = is_prime_exclusive.lower() == 'true'
+                        prime_exclusive_message = product_data.get('prime_exclusive_message', '')
+
+                        # Очистка сообщения от JavaScript-кода
+                        prime_exclusive_message_clean = re.split(r'\(function', prime_exclusive_message)[0].strip()
+
+                        # Если продукт является Prime Exclusive, извлекаем Prime Price из сообщения
+                        if is_prime_exclusive and prime_exclusive_message_clean:
+                            extracted_prime_price = extract_prime_price_from_message(prime_exclusive_message_clean)
+                            if extracted_prime_price != "Not Found":
+                                prime_price = extracted_prime_price
+                                # Пересчитываем итоговую цену и процент скидки с новым Prime Price
+                                final_price = calculate_final_price(price, float(prime_price.replace(',', '.').replace(' €', '')), coupon, currency_symbol)
+                                discount_percent = calculate_discount_percent(price, final_price)
+                            else:
+                                logging.warning(f"Не удалось извлечь Prime Price из сообщения для ASIN {asin}")
+
                         product_info = {
                             "ASIN": asin,
                             "Title": product_data.get('title', 'Не найдено'),
@@ -1040,7 +1130,9 @@ def gather_product_data(config):
                             "BSR": bsr,
                             "Brand": brand,
                             "Scrape Date": get_kyiv_time().strftime("%d.%m.%Y"),
-                            "URL": var_url
+                            "URL": var_url,
+                            "is_prime_exclusive": is_prime_exclusive,
+                            "prime_exclusive_message": prime_exclusive_message_clean
                         }
 
                         # Добавляем логирование извлечённых данных
@@ -1057,6 +1149,24 @@ def gather_product_data(config):
                     logging.error(f"Ошибка при сборе данных для вариации конкурента {competitor_name} (ASIN {asin}): {str(e)}")
 
     return current_results
+def extract_prime_price_from_message(message):
+    """
+    Извлекает цену из сообщения prime_exclusive_message.
+    
+    :param message: Строка с сообщением Prime Exclusive.
+    :return: Цена как строка, например "43,19 €" или "Not Found".
+    """
+    try:
+        # Регулярное выражение для поиска цены в формате "XX,XX €"
+        match = re.search(r'kauf(?:e|en)?(?: diesen Artikel)? bei (\d+[.,]\d{2})\s*€', message, re.IGNORECASE)
+        if match:
+            price_str = match.group(1).replace(',', '.')
+            price_float = float(price_str)
+            return f"{price_float:.2f} €"
+    except Exception as e:
+        logging.error(f"Ошибка при извлечении Prime Price из сообщения: {e}")
+    return "Not Found"
+
 
 def extract_bsr(product_information):
     """Извлекает BSR (Best Sellers Rank) из product_information."""
@@ -1425,7 +1535,7 @@ def main():
         return
 
     # ID таблицы Google Sheets
-    spreadsheet_id = '1uwAfRT_HB8oxWK6djLZmBCpSkRsCRxtT5BDB9Iwck38'
+    spreadsheet_id = '1ibuYnN9WeRZdHUqoiU2jFLez59fm5Gfgzeyvq7M4EaI'
 
     # Авторизация и загрузка основного конфига
     try:
@@ -1534,3 +1644,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
